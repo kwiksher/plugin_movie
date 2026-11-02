@@ -1,0 +1,12 @@
+//
+// Prefix header for the App target.
+//
+// Referenced by GCC_PREFIX_HEADER in ios/App.xcodeproj but missing from the
+// repo, so the demo app could not build. Same content as the Corona Native
+// project template's Prefix.pch.
+//
+
+#ifdef __OBJC__
+	#import <UIKit/UIKit.h>
+	#import <Foundation/Foundation.h>
+#endif
