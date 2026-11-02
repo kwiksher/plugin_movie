@@ -3,7 +3,7 @@
 path=$(dirname "$0")
 
 OUTPUT_DIR=$1
-TARGET_NAME=plugin_library
+TARGET_NAME=plugin_movie
 OUTPUT_SUFFIX=a
 CONFIG=Release
 
@@ -50,9 +50,18 @@ checkError
 xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG -sdk iphonesimulator
 checkError
 
-# create universal binary
-lipo -create "$path"/build/$CONFIG-iphoneos/lib$TARGET_NAME.$OUTPUT_SUFFIX "$path"/build/$CONFIG-iphonesimulator/lib$TARGET_NAME.$OUTPUT_SUFFIX -output "$OUTPUT_DIR"/lib$TARGET_NAME.$OUTPUT_SUFFIX
-checkError
+# No universal merge: a device slice and a simulator slice can no longer be
+# lipo'd together -- on Apple Silicon both are arm64 and lipo aborts with
+# "same architectures (arm64) found". The two Corona plugin structures below are
+# assembled from the per-SDK libraries directly, so validate each slice instead.
+for plat in iphoneos iphonesimulator; do
+	lib="$path/build/$CONFIG-$plat/lib$TARGET_NAME.$OUTPUT_SUFFIX"
+	if [ ! -f "$lib" ]; then
+		echo "missing $lib"
+		exit -1
+	fi
+	echo "$plat: $(lipo -archs "$lib")"
+done
 
 
 # copy corona plugin structure
@@ -114,11 +123,12 @@ build_plugin_structure() {
 
 
 
-build_plugin_structure "$OUTPUT_DIR/BuiltPlugin/iphone" iphoneos  " -extract armv7 -extract  arm64 "
+build_plugin_structure "$OUTPUT_DIR/BuiltPlugin/iphone" iphoneos  " -extract arm64 "
 
-build_plugin_structure "$OUTPUT_DIR/BuiltPlugin/iphone-sim" iphonesimulator  " -extract i386  -extract  x86_64 "
-
-
+build_plugin_structure "$OUTPUT_DIR/BuiltPlugin/iphone-sim" iphonesimulator  "-extract arm64 -extract x86_64"
 
 
-echo "$OUTPUT_DIR"/lib$TARGET_NAME.$OUTPUT_SUFFIX
+
+
+echo "device:    $OUTPUT_DIR/BuiltPlugin/iphone"
+echo "simulator: $OUTPUT_DIR/BuiltPlugin/iphone-sim"
