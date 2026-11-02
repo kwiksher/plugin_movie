@@ -31,6 +31,7 @@ CORONA_EXPORT int luaopen_plugin_movie(lua_State *L) {
 // ----------------------------------------------------------------------------
 
 struct Movie {
+    char *path = NULL;                  // kept so the decoder can be restarted
     THEORAPLAY_Decoder *decoder = NULL;
     const THEORAPLAY_VideoFrame *video = NULL;
     const THEORAPLAY_AudioPacket *audio = NULL;
@@ -54,6 +55,37 @@ struct Movie {
 };
 
 // ----------------------------------------------------------------------------
+
+
+// ----------------------------------------------------------------------------
+
+// Rewind by reopening the stream in place.
+//
+// stop() used to call THEORAPLAY_stopDecode() and leave "stopped" set, which made
+// the texture single-use: play() afterwards ran on a dead decoder (crash), and a
+// client that wanted to replay had to build a *second* MovieTexture — which the
+// host refuses for a path it already has open. Restarting here keeps one texture
+// alive and reusable, so stop() + play() is a real rewind.
+static bool RestartDecoder(Movie *movie) {
+    if(movie->video) { THEORAPLAY_freeVideo(movie->video); movie->video = NULL; }
+    if(movie->audio) { THEORAPLAY_freeAudio(movie->audio); movie->audio = NULL; }
+
+    if(movie->decoder) {
+        THEORAPLAY_stopDecode(movie->decoder);
+        movie->decoder = NULL;
+    }
+
+    movie->elapsed = 0;
+    movie->framems = 0;
+    movie->audiostarted = false;
+    movie->audiocompleted = false;
+    movie->stopped = false;
+
+    if(!movie->path) return false;
+
+    movie->decoder = THEORAPLAY_startDecodeFile(movie->path, NUM_MAXFRAMES, THEORAPLAY_VIDFMT_RGBA);
+    return movie->decoder != NULL;
+}
 
 bool startAudioStream(Movie *movie) {
     ALsizei i;
@@ -142,6 +174,7 @@ static void Dispose(void *context) {
     THEORAPLAY_freeAudio(movie->audio);
     THEORAPLAY_freeVideo(movie->video);
 
+    free(movie->path);
     delete movie;
 }
 
@@ -257,11 +290,12 @@ static int pause(lua_State *L) {
 static int stop(lua_State *L) {
     Movie *movie = (Movie*)CoronaExternalGetUserData(L, 1);
 
-    movie->stopped = true;
     movie->playing = false;
     stopAudioStream(movie);
 
-    THEORAPLAY_stopDecode(movie->decoder);
+    // Rewind to the first frame and stay usable. Setting "stopped" here is what
+    // made play() crash afterwards; Dispose() is the only real teardown now.
+    RestartDecoder(movie);
 
     return 0;
 }
@@ -302,6 +336,7 @@ static int newMovieTexture(lua_State *L) {
         return 1;
     }
 
+    movie->path = strdup(path);
     movie->decoder = THEORAPLAY_startDecodeFile(path, NUM_MAXFRAMES, THEORAPLAY_VIDFMT_RGBA);
 
     // Invalid pixel format / insufficient memory

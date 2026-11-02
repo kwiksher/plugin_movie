@@ -8,6 +8,7 @@
 #define _SimulatorPluginLibrary_H__
 
 #include <cstring>
+#include <cstdlib>   // strdup/free for Movie::path (decoder restart)
 
 #include <CoronaLua.h>
 #include <CoronaMacros.h>
