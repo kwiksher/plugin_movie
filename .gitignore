@@ -351,3 +351,10 @@ MigrationBackup/
 
 *.cmd
 1/
+# per-user Xcode state (scheme/UI prefs), not project data
+**/xcuserdata/
+**/*.xcuserstate
+
+# Xcode build products
+mac/build/
+build-out/
