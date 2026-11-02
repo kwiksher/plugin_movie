@@ -73,6 +73,10 @@ StyleCopReport.xml
 *.obj
 *.iobj
 *.pch
+# ...but the iOS App target's prefix header is referenced by
+# GCC_PREFIX_HEADER = Prefix.pch and must be in the repo, or the demo app
+# cannot build from a fresh clone.
+!ios/Prefix.pch
 *.pdb
 *.ipdb
 *.pgc
