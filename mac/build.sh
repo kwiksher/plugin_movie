@@ -31,6 +31,13 @@ then
     OUTPUT_DIR=.
 fi
 
+# pushd below silently falls back to the cwd when this is missing, which used
+# to drop the dylib into whatever directory the caller happened to be in.
+if [ ! -d "$OUTPUT_DIR" ]
+then
+    mkdir -p "$OUTPUT_DIR"
+fi
+
 pushd $OUTPUT_DIR > /dev/null
 dir=`pwd`
 OUTPUT_DIR=$dir
@@ -38,10 +45,19 @@ popd > /dev/null
 
 echo "OUTPUT_DIR: $OUTPUT_DIR"
 
-xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG clean
+# Let CI (and anyone with Corona Native in a non-default location) point the
+# build at a specific Corona tree. Falls back to the xcconfig default.
+XCODEBUILD_ARGS=()
+if [ -n "${CORONA_ROOT:-}" ]; then
+    XCODEBUILD_ARGS+=("CORONA_ROOT=$CORONA_ROOT")
+fi
+
+xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG clean \
+    ${XCODEBUILD_ARGS[@]+"${XCODEBUILD_ARGS[@]}"}
 checkError
 
-xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG
+xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG \
+    ${XCODEBUILD_ARGS[@]+"${XCODEBUILD_ARGS[@]}"}
 checkError
 
 cp "$path/build/Release/$TARGET_NAME.$OUTPUT_SUFFIX" "$OUTPUT_DIR"

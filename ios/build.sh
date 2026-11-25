@@ -31,6 +31,14 @@ then
 	OUTPUT_DIR=.
 fi
 
+# pushd below silently falls back to the cwd when this is missing, which used
+# to drop the built plugin structure into whatever directory the caller
+# happened to be in.
+if [ ! -d "$OUTPUT_DIR" ]
+then
+	mkdir -p "$OUTPUT_DIR"
+fi
+
 pushd "$OUTPUT_DIR" > /dev/null
 dir=$(pwd)
 OUTPUT_DIR=$dir
@@ -38,16 +46,26 @@ popd > /dev/null
 
 echo "OUTPUT_DIR: $OUTPUT_DIR"
 
+# Let CI (and anyone with Corona Native in a non-default location) point the
+# build at a specific Corona tree. Falls back to the xcconfig default.
+XCODEBUILD_ARGS=()
+if [ -n "${CORONA_ROOT:-}" ]; then
+	XCODEBUILD_ARGS+=("CORONA_ROOT=$CORONA_ROOT")
+fi
+
 # Clean
-xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG clean
+xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG clean \
+	${XCODEBUILD_ARGS[@]+"${XCODEBUILD_ARGS[@]}"}
 checkError
 
 # iOS
-xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG -sdk iphoneos
+xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG -sdk iphoneos \
+	${XCODEBUILD_ARGS[@]+"${XCODEBUILD_ARGS[@]}"}
 checkError
 
 # iOS-sim
-xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG -sdk iphonesimulator
+xcodebuild -project "$path/Plugin.xcodeproj" -configuration $CONFIG -sdk iphonesimulator \
+	${XCODEBUILD_ARGS[@]+"${XCODEBUILD_ARGS[@]}"}
 checkError
 
 # No universal merge: a device slice and a simulator slice can no longer be
