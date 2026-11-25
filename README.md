@@ -114,3 +114,23 @@ ffmpeg -i video.mp4 -c:v libtheora -q:v 7 -c:a libvorbis -q:a 5 -pix_fmt yuv420p
 - [theoraplay](https://github.com/icculus/theoraplay) by [@icculus](https://github.com/icculus)
 - Insipired by the [theora](https://github.com/ggcrunchy/solar2d-plugins/tree/master/theora) plugin by [@ggcrunchy](https://github.com/ggcrunchy) as well as a video wrapper provided by a user of the [Solar2D discord](https://discord.gg/WMtCemc)
 - macOS and iOS builds by [@kwiksher](https://github.com/kwiksher)
+
+# Building
+
+`.github/workflows/build.yml` builds the plugin for every supported platform on
+every push and pull request, and packages a Corona plugin bundle on `v*` tags.
+
+| Platform | Output |
+| --- | --- |
+| macOS | `plugin_movie.dylib` (universal: arm64 + x86_64) |
+| iOS | `libplugin_movie.a` for device and simulator |
+| Android | `libplugin.movie.so` for arm64-v8a, armeabi-v7a, x86, x86_64 + `android.tgz` |
+| Windows | `plugin_movie.dll` (with Corona's import libs) or an MSVC compile check |
+
+Building locally works the same way - see [`ci/README.md`](ci/README.md). The
+only external input is the Corona/Solar2D public headers, which
+`ci/corona-native.sh` fetches at a pinned commit.
+
+> If you change `shared/plugin_movie.lua`, regenerate
+> `shared/generated/plugin_movie.c` with Corona's `lua2c` and commit both:
+> CI reuses the committed generated file instead of running `lua2c`.

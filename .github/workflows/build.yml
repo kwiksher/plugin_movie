@@ -1,0 +1,213 @@
+name: Build
+
+# Builds the plugin for every platform Corona/Solar2D can load it on:
+#   macOS  - universal plugin_movie.dylib (arm64 + x86_64)
+#   iOS    - libplugin_movie.a for device (arm64) and simulator (arm64 + x86_64)
+#   Android- libplugin.movie.so for arm64-v8a, armeabi-v7a, x86, x86_64 + android.tgz
+#   Windows - plugin_movie.dll (needs the Corona win import libs) or a compile check
+#
+# Only the Corona public headers are fetched (from pinned Solar2D sources, see
+# ci/corona-native.sh). The ogg/vorbis/theora/OpenAL dependencies are vendored.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- macOS ----
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Corona headers
+        run: bash ci/corona-native.sh "$PWD/.ci/corona-native"
+
+      - name: Build plugin_movie.dylib
+        env:
+          CORONA_ROOT: ${{ github.workspace }}/.ci/corona-native
+        run: |
+          set -euo pipefail
+          bash mac/build.sh "$PWD/dist/mac"
+          archs=$(lipo -archs dist/mac/plugin_movie.dylib)
+          echo "architectures: $archs"
+          case "$archs" in *arm64*) ;; *) echo "missing arm64 slice"; exit 1 ;; esac
+          case "$archs" in *x86_64*) ;; *) echo "missing x86_64 slice"; exit 1 ;; esac
+          # Capture first: `nm ... | grep -q` races under `set -o pipefail` (grep
+          # exits on the first match, nm dies of SIGPIPE, the pipeline fails).
+          symbols=$(nm -g dist/mac/plugin_movie.dylib)
+          case "$symbols" in
+            *luaopen_plugin_movie*) ;;
+            *) echo "luaopen_plugin_movie not exported"; exit 1 ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-movie-macos
+          path: dist/mac/
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ iOS ----
+  ios:
+    name: iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Corona headers
+        run: bash ci/corona-native.sh "$PWD/.ci/corona-native"
+
+      - name: Build libplugin_movie.a (device + simulator)
+        env:
+          CORONA_ROOT: ${{ github.workspace }}/.ci/corona-native
+        run: |
+          set -euo pipefail
+          bash ios/build.sh "$PWD/dist/ios"
+          for slice in iphone iphone-sim; do
+            lib="dist/ios/BuiltPlugin/$slice/libplugin_movie.a"
+            test -f "$lib" || { echo "missing $lib"; exit 1; }
+            echo "$slice: $(lipo -archs "$lib")"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-movie-ios
+          path: dist/ios/BuiltPlugin/
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- Android ----
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Corona headers
+        run: bash ci/corona-native.sh "$PWD/.ci/corona-native"
+
+      - name: Find or install the Android NDK
+        id: ndk
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ndk_dir=""
+          if compgen -G "$sdk/ndk/*/ndk-build" > /dev/null; then
+            ndk_dir=$(ls -d "$sdk"/ndk/* | sort -V | tail -1)
+            echo "using preinstalled NDK $ndk_dir"
+          else
+            # Pinned, self-contained fallback: no third-party action involved.
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/ndk.zip" \
+              https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+            unzip -q "$RUNNER_TEMP/ndk.zip" -d "$RUNNER_TEMP"
+            ndk_dir="$RUNNER_TEMP/android-ndk-r27c"
+            echo "downloaded NDK r27c"
+          fi
+          echo "dir=$ndk_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Build libplugin.movie.so (4 ABIs) + android.tgz
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.dir }}
+          CORONA_NATIVE: ${{ github.workspace }}/.ci/corona-native
+        run: bash ci/build-android.sh "$PWD/dist/android"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-movie-android
+          path: dist/android/
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- Windows ----
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    env:
+      # Set CORONA_WIN_SDK_URL (repo secret) to a zip holding Corona's
+      # Corona/win/lib/*.lib files to turn this job into a real DLL build.
+      CORONA_WIN_SDK_URL: ${{ secrets.CORONA_WIN_SDK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Corona headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${CORONA_WIN_SDK_URL:-}" ]; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/win-libs.zip" "$CORONA_WIN_SDK_URL"
+            bash ci/corona-native.sh "$PWD/.ci/corona-native" --win-libs "$RUNNER_TEMP/win-libs.zip"
+          else
+            bash ci/corona-native.sh "$PWD/.ci/corona-native"
+          fi
+
+      - name: Build plugin_movie.dll
+        shell: pwsh
+        run: ./ci/build-windows.ps1 -CoronaRoot "$PWD/.ci/corona-native" -OutDir "$PWD/dist/win32"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-movie-windows
+          path: dist/win32/
+          if-no-files-found: error
+
+  # ------------------------------------------------------------- packaging ----
+  package:
+    name: Package release
+    needs: [macos, ios, android, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: false
+
+      - name: Assemble the Corona plugin package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          stage="dist/plugin.movie-$version"
+          mkdir -p "$stage/ios" "$stage/mac" "$stage/win32"
+
+          cp -R dist/plugin-movie-ios/. "$stage/ios/"
+          cp dist/plugin-movie-android/android.tgz "$stage/"
+          cp -R dist/plugin-movie-macos/. "$stage/mac/"
+          # The Windows job always uploads a BUILD-MODE.txt; only a real DLL links.
+          cp -R dist/plugin-movie-windows/. "$stage/win32/"
+          if [ ! -f "$stage/win32/plugin_movie.dll" ]; then
+            echo "::warning::Windows artifact is a compile-only check, not a loadable DLL (see win32/BUILD-MODE.txt)"
+          fi
+
+          (cd dist && zip -qr "plugin.movie-$version.zip" "plugin.movie-$version")
+          unzip -l "dist/plugin.movie-$version.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-movie-package
+          path: dist/plugin.movie-*.zip
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+          gh release upload "$tag" dist/plugin.movie-*.zip --clobber

@@ -364,3 +364,8 @@ mac/build/
 ios/build/
 build-out/
 build-out-ios/
+
+# CI scratch: provisioned Corona header tree, build output, packages
+.ci/
+dist/
+android/libs/
